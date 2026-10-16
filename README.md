@@ -4,22 +4,20 @@
 
 ## 安装
 
-需要支持 SDK 0.6.37 的 BB、Node.js 22 或更新版本及 npm。在本目录执行：
+需要支持 SDK 0.6.37 的 BB、Node.js 22 或更新版本及 npm：
 
 ```sh
-npm ci
-bb plugin build
-bb plugin install . --yes
+bb plugin install https://github.com/hxy91819/bb-plugin-bookmarks
 ```
 
-这是本地路径安装，目录需要保留。修改源码后执行 `bb plugin build` 和 `bb plugin reload bookmarks`，或用 `bb plugin dev`。
+安装会跟踪仓库默认分支，BB 自动安装运行依赖并构建前后端。
 
 ## 使用
 
 - 选中 assistant 回复文字，在选区菜单点击“加书签”，保存精确选区。
-- 消息操作栏的“加书签”保存整条消息文字，支持用户消息及 assistant 回复。成功显示 toast。
-- 侧栏底部书签图标展开最近 10 条，可搜索文字、备注、会话标题及项目名称；“查看全部”打开导航栏书签页。
-- 全页按项目分组，每页 100 条；可搜索、翻页、复制文字、删除和编辑备注。点击文字回到原会话的原消息。
+- 消息操作栏的“加书签”保存整条消息文字，支持用户消息及 assistant 回复。添加成功自动打开右侧“书签”标签页，恢复当前项目过滤、清空搜索并滚动高亮新书签。
+- 从会话右侧面板的“+”选择“书签”打开标签页。默认勾选“仅当前项目”，按会话分组，当前会话排在最前；取消勾选显示全部项目，按项目分组。
+- 可搜索文字、备注、会话标题及项目名称，复制文字、删除和编辑备注。点击文字回到原会话的原消息，同会话内直接滚动。没有侧栏底部或导航栏全页入口。
 
 定位使用 `toThread(threadId, { experimental_messageSeq })`。支持此扩展的宿主会加载并滚动到目标消息；较旧宿主忽略该选项时仍会打开会话。定位粒度是消息，不会高亮选中的句子。原会话或消息已删除时，书签文字仍保留，宿主负责显示目标不可用。
 
@@ -38,12 +36,24 @@ bb bookmarks rm <id> --json
 
 ## 开发与数据
 
+本地路径安装仅用于开发，目录需要保留：
+
+```sh
+npm ci
+bb plugin build
+bb plugin install . --yes
+```
+
+修改源码后执行 `bb plugin build` 和 `bb plugin reload bookmarks`，或用 `bb plugin dev`。
+
 ```sh
 npm run typecheck
 npm test
 npm run build
 ```
 
-SDK 固定为公开 npm 包 `@get-bb/plugin-sdk@0.6.37`。消息定位扩展依据配套 BB 源码契约，以结构化选项调用，同时兼容尚未包含该选项的公开声明。
+SDK 固定为公开 npm 包 `@get-bb/plugin-sdk@0.6.37`，放在 `dependencies`：共享 RPC 契约在浏览器运行时需要 SDK 根包，而 Git 安装只安装运行依赖（忽略安装脚本）。不需要提交 `dist/`。消息定位扩展依据配套 BB 源码契约，以结构化选项调用，同时兼容尚未包含该选项的公开声明。
+
+面板分批读取匹配书签（每次最多 200 条），统一分组排序；组内按创建时间倒序，其余组按最近书签出现顺序。新增定位和高亮只保留在当前浏览器会话，不写入标签参数，连续新增会复用同一个标签页。
 
 数据位于当前 BB 实例的 `plugins/bookmarks/data.db`；使用插件存储的追加式 migration，搜索和分页在 SQLite 中完成。卸载、备份及数据目录生命周期由 BB 管理。测试通过公开 SDK harness 操作真实 SQLite，覆盖重载持久化、搜索、项目筛选、备注、删除、分页与 CLI 行为。

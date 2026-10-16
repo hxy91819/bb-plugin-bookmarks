@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { toast } from "sonner";
 import {
   definePluginApp,
@@ -6,11 +6,19 @@ import {
   useBbNavigate,
   useRealtime,
   useRpc,
-  type ExperimentalSidebarFooterDisclosureProps,
+  useSdk,
+  type PluginThreadPanelProps,
 } from "@get-bb/plugin-sdk/app";
-import { groupBookmarks, type Bookmark, type rpcContract } from "./contract";
+import { bookmarkSchema, groupBookmarks, type Bookmark, type rpcContract } from "./contract";
 
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
+let target: { threadId: string; id: string } | null = null;
+const listeners = new Set<() => void>();
+const subscribe = (listener: () => void) => {
+  listeners.add(listener);
+  return () => { listeners.delete(listener); };
+};
+const getTarget = () => target;
 
 async function addBookmark(threadId: string, messageSeq: number, text: string) {
   const response = await fetch("/api/v1/plugins/bookmarks/rpc/add", {
@@ -28,16 +36,17 @@ async function addBookmark(threadId: string, messageSeq: number, text: string) {
   ) {
     throw new Error("添加书签失败，请重试");
   }
+  return bookmarkSchema.parse("result" in body ? body.result : undefined);
 }
 
 function BookmarkRow({
   bookmark,
   onChanged,
-  dismiss,
+  highlighted,
 }: {
   bookmark: Bookmark;
   onChanged(): void;
-  dismiss?(): void;
+  highlighted: boolean;
 }) {
   const navigate = useBbNavigate();
   const rpc = useRpc<typeof rpcContract>();
@@ -65,10 +74,13 @@ function BookmarkRow({
     } catch {
       navigate.toThread(bookmark.threadId);
     }
-    dismiss?.();
   };
   return (
-    <li className="rounded-lg border border-border bg-card p-3 space-y-2">
+    <li
+      ref={(element) => { if (highlighted) element?.scrollIntoView({ block: "nearest" }); }}
+      data-bookmark-id={bookmark.id}
+      className={`rounded-lg border bg-card p-3 space-y-2 ${highlighted ? "border-primary ring-2 ring-primary" : "border-border"}`}
+    >
       <button
         className="block w-full text-left space-y-2"
         onClick={open}
@@ -148,24 +160,57 @@ function BookmarkRow({
   );
 }
 
-function BookmarkList({ compact = false, dismiss }: { compact?: boolean; dismiss?(): void }) {
+function BookmarksPanel({ threadId }: PluginThreadPanelProps) {
   const rpc = useRpc<typeof rpcContract>();
-  const navigate = useBbNavigate();
+  const sdk = useSdk();
+  const requestedTarget = useSyncExternalStore(subscribe, getTarget);
+  const selectedId = requestedTarget?.threadId === threadId ? requestedTarget.id : null;
+  const [projectId, setProjectId] = useState<string | null>(null);
+  const [currentProjectOnly, setCurrentProjectOnly] = useState(true);
   const [query, setQuery] = useState("");
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
   const [total, setTotal] = useState(0);
-  const [offset, setOffset] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
   const refresh = useCallback(() => setRevision((value) => value + 1), []);
-  const limit = compact ? 10 : 100;
   useRealtime("changed", refresh);
   useEffect(() => {
     let active = true;
+    setProjectId(null);
+    sdk.threads.get({ threadId }).then(
+      (thread) => { if (active) setProjectId(thread.projectId); },
+      (cause) => { if (active) { setError(errorText(cause)); setLoading(false); } },
+    );
+    return () => { active = false; };
+  }, [sdk, threadId]);
+  useEffect(() => {
+    if (!selectedId) return;
+    setQuery("");
+    setCurrentProjectOnly(true);
+    refresh();
+  }, [selectedId, refresh]);
+  useEffect(() => {
+    if (projectId === null) return;
+    let active = true;
     setLoading(true);
     const timer = setTimeout(() => {
-      rpc.call("list", { query, limit, offset }).then(
+      const load = async () => {
+        const bookmarks: Bookmark[] = [];
+        let total = 0;
+        do {
+          const page = await rpc.call("list", {
+            query, ...(currentProjectOnly ? { projectId } : {}),
+            limit: 200, offset: bookmarks.length,
+          });
+          if (!active) return { bookmarks, total };
+          bookmarks.push(...page.bookmarks);
+          total = page.total;
+          if (page.bookmarks.length === 0) break;
+        } while (bookmarks.length < total);
+        return { bookmarks, total };
+      };
+      load().then(
         (result) => {
           if (!active) return;
           setBookmarks(result.bookmarks);
@@ -185,29 +230,14 @@ function BookmarkList({ compact = false, dismiss }: { compact?: boolean; dismiss
       active = false;
       clearTimeout(timer);
     };
-  }, [rpc, query, limit, offset, revision]);
+  }, [rpc, query, projectId, currentProjectOnly, revision]);
   return (
-    <div
-      className={
-        compact
-          ? "max-h-[70vh] overflow-y-auto p-3 space-y-3"
-          : "h-full overflow-y-auto p-4 space-y-4"
-      }
-    >
-      <div className="flex items-center justify-between gap-2">
-        <h1 className="text-lg font-semibold">{compact ? "最近书签" : "书签"}</h1>
-        {compact && (
-          <button
-            className="text-sm underline"
-            onClick={() => {
-              navigate.toPluginPanel("bookmarks");
-              dismiss?.();
-            }}
-          >
-            查看全部
-          </button>
-        )}
-      </div>
+    <div className="h-full overflow-y-auto p-4 space-y-4">
+      <label className="flex items-center gap-2 text-sm">
+        <input type="checkbox" checked={currentProjectOnly}
+          onChange={(event) => setCurrentProjectOnly(event.target.checked)} />
+        仅当前项目
+      </label>
       <input
         aria-label="搜索书签"
         placeholder="搜索文字、备注、会话或项目"
@@ -215,7 +245,6 @@ function BookmarkList({ compact = false, dismiss }: { compact?: boolean; dismiss
         value={query}
         onChange={(event) => {
           setQuery(event.target.value);
-          setOffset(0);
         }}
       />
       {error ? (
@@ -238,20 +267,20 @@ function BookmarkList({ compact = false, dismiss }: { compact?: boolean; dismiss
                 : "还没有书签。在消息上点击“加书签”，或选中回复文字后添加。"}
             </p>
           )}
-          {groupBookmarks(bookmarks).map((group) => (
+          {groupBookmarks(bookmarks, threadId, !currentProjectOnly).map((group) => (
             <section
-              key={group.projectId}
+              key={group.id}
               className="space-y-2"
-              aria-label={`项目：${group.projectName}`}
+              aria-label={group.title}
             >
-              <h2 className="text-sm font-semibold">{group.projectName}</h2>
+              <h2 className="text-sm font-semibold">{group.title}</h2>
               <ul className="space-y-2">
                 {group.bookmarks.map((bookmark) => (
                   <BookmarkRow
                     key={bookmark.id}
                     bookmark={bookmark}
                     onChanged={refresh}
-                    dismiss={dismiss}
+                    highlighted={bookmark.id === selectedId}
                   />
                 ))}
               </ul>
@@ -259,33 +288,11 @@ function BookmarkList({ compact = false, dismiss }: { compact?: boolean; dismiss
           ))}
           <div className="flex items-center gap-3 text-xs text-muted-foreground">
             <span>共 {total} 条</span>
-            {!compact && (
-              <>
-                <button
-                  disabled={offset === 0}
-                  onClick={() => setOffset(Math.max(0, offset - limit))}
-                >
-                  上一页
-                </button>
-                <button
-                  disabled={offset + limit >= total}
-                  onClick={() => setOffset(offset + limit)}
-                >
-                  下一页
-                </button>
-              </>
-            )}
           </div>
         </>
       )}
     </div>
   );
-}
-function RecentBookmarks({ dismiss }: ExperimentalSidebarFooterDisclosureProps) {
-  return <BookmarkList compact dismiss={dismiss} />;
-}
-function BookmarksPage() {
-  return <BookmarkList />;
 }
 
 export default definePluginApp((app) => {
@@ -295,29 +302,25 @@ export default definePluginApp((app) => {
     icon: "bookmarks/bookmark",
     async run(context) {
       try {
-        await addBookmark(
+        const bookmark = await addBookmark(
           context.threadId,
           context.message.experimental_messageSeq,
           context.selectedText ?? context.message.text,
         );
+        target = { threadId: context.threadId, id: bookmark.id };
+        listeners.forEach((listener) => listener());
+        context.openPanel({ actionId: "bookmarks" });
         toast.success("已加书签");
       } catch (error) {
         toast.error(errorText(error));
       }
     },
   });
-  app.slots.navPanel({
+  app.slots.threadPanelAction({
     id: "bookmarks",
     title: "书签",
     icon: "bookmarks/bookmark",
-    path: "bookmarks",
-    component: BookmarksPage,
-  });
-  app.experimental_sidebarFooter.register({
-    kind: "disclosure",
-    id: "recent",
-    label: "最近书签",
-    icon: "bookmarks/bookmark",
-    component: RecentBookmarks,
+    layout: "flush",
+    component: BookmarksPanel,
   });
 });

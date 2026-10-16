@@ -63,9 +63,9 @@ test("保存精确文字与来源，重载后可搜索、分组、修改和删�
     assert.equal(page.bookmarks.length, 1);
     const next = await list({ projectId: "p1", limit: 1, offset: 1 });
     assert.notEqual(page.bookmarks[0].id, next.bookmarks[0].id);
-    const groups = groupBookmarks((await list()).bookmarks);
+    const groups = groupBookmarks((await list()).bookmarks, "t1", true);
     assert.equal(groups.length, 2);
-    assert.deepEqual(groups.map((group) => [group.projectId, group.bookmarks.length]).sort(), [
+    assert.deepEqual(groups.map((group) => [group.id, group.bookmarks.length]).sort(), [
       ["p1", 2],
       ["p2", 1],
     ]);
@@ -91,7 +91,7 @@ test("保存精确文字与来源，重载后可搜索、分组、修改和删�
 
 test("包不依赖私有 BB API", async () => {
   const result = await experimental_scanPublicSdkOnly(process.cwd(), {
-    allow: [/^react$/, /^sonner$/],
+    allow: [/^react$/, /^sonner$/, /^jsdom$/, /^@testing-library\/react$/],
   });
   assert.deepEqual(result.violations, []);
   assert.deepEqual(result.privateDependencies, []);

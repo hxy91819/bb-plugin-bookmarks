@@ -40,18 +40,21 @@ export const rpcContract = defineRpcContract({
   },
 });
 
-export function groupBookmarks(bookmarks: Bookmark[]) {
+export function groupBookmarks(bookmarks: Bookmark[], currentThreadId: string, byProject: boolean) {
   const groups = new Map<
     string,
-    { projectId: string; projectName: string; bookmarks: Bookmark[] }
+    { id: string; title: string; bookmarks: Bookmark[] }
   >();
   for (const bookmark of bookmarks) {
-    let group = groups.get(bookmark.projectId);
+    const id = byProject ? bookmark.projectId : bookmark.threadId;
+    let group = groups.get(id);
     if (!group) {
-      group = { projectId: bookmark.projectId, projectName: bookmark.projectName, bookmarks: [] };
-      groups.set(bookmark.projectId, group);
+      group = { id, title: byProject ? bookmark.projectName : bookmark.threadTitle, bookmarks: [] };
+      groups.set(id, group);
     }
     group.bookmarks.push(bookmark);
   }
-  return [...groups.values()];
+  const result = [...groups.values()];
+  if (!byProject) result.sort((a, b) => Number(b.id === currentThreadId) - Number(a.id === currentThreadId));
+  return result;
 }
