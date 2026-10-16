@@ -1,4 +1,52 @@
-# 验证记录（2026-10-15）
+# 验证记录（2026-10-16）：右侧面板与 GitHub 安装
+
+本轮只修改插件仓库，没有修改 BB 源码、重启服务或停止进程。
+
+## 自动化与审查
+
+- `npm run typecheck`、`npm test`（4 项）、`npm run build`、`git diff --check`：通过。
+- 前端 SDK harness + jsdom 覆盖默认项目过滤、取消过滤、会话分组与当前会话优先、跨 200 条分页的完整分组、搜索、消息跳转，以及新增后恢复过滤、清空搜索、定位与高亮；选区/消息 action 覆盖精确文字、成功打开和失败不打开。
+- 原有真实 SQLite、持久化、备注、删除、分页及 CLI 测试通过，CLI 实现和 agent skill 未改动。
+- autoreview 独立审查全部代码和 README 差异，无 P0/P1 发现。
+- `npm audit --omit=optional`：0 漏洞；提交内容的敏感串检查未发现问题。
+
+## GitHub 安装
+
+代码提交：[67bf840](https://github.com/hxy91819/bb-plugin-bookmarks/commit/67bf8406378402dc17fe3b553e46f4f9dd5bc84d)。推送后先执行 `bb plugin uninstall bookmarks`，再执行：
+
+```sh
+bb plugin install https://github.com/hxy91819/bb-plugin-bookmarks --yes
+```
+
+生产安装成功，状态 `running`，source 解析到该 Git 提交，没有回退本地路径。根因已对照 BB 安装源码确认：Git 安装使用 `--omit=dev --omit=optional --ignore-scripts`，共享 RPC 契约的前端运行时导入 SDK 根包，因此 SDK 必须放在 `dependencies`，而不是 `devDependencies`。没有提交预构建产物或引入安装脚本。
+
+## 生产 UI 实测
+
+使用 dev-browser 打开本机生产 BB；证据目录：`/tmp/bb-bookmarks-panel-bbESXp`。下列截图均已读取检查。
+
+| 验收 | 结果 | 截图 |
+| --- | --- | --- |
+| 面板“+”提供书签标签 | 通过，实际打开 | `09-panel-launcher.png` |
+| 默认仅当前项目，按会话分组、当前会话最前 | 通过，较旧的当前会话排在较新的其他会话之前，另一项目不可见 | `01-default-current-project.png` |
+| 取消过滤后按项目分组 | 通过，显示两个项目、三条书签 | `02-all-projects.png` |
+| 真实 assistant 选区菜单新增，自动打开并定位高亮 | 通过，关闭标签后添加精确选区，自动重开，原消息编号 390 | `03-selection-menu.png`、`04-selection-auto-open.png` |
+| 消息按钮新增，复用标签并定位高亮 | 通过，在取消过滤且搜索无结果时新增，恢复勾选、清空搜索；仅一个书签标签 | `07-message-auto-open.png` |
+| 同会话点击滚动到原消息 | 通过，重复点击同一目标，消息顶部从 −1801.125px 回到 63.875px | `05-same-thread-jump.png` |
+| 跨会话点击跳到原消息 | 通过，目标消息顶部为 64px，消息编号 1，书签文字与原文一致 | `06-cross-thread-jump.png` |
+| 改备注、搜索、复制 | 通过，备注保存后搜索仅显示该条；clipboard readText 与原文逐字一致 | `08-note-search.png` |
+| 删除与清理 | 通过，UI 删除一条，其余测试书签通过 CLI 删除；最终 `{bookmarks: [], total: 0}` | `10-cleaned-empty-panel.png`、`cleanup.json` |
+| 移除旧侧栏及导航栏入口 | 通过，生产 DOM 中两类旧入口均为 0，注册测试也无 navPanel | 自动化与 DOM 检查 |
+
+## 我自行引入的决定
+
+- 列表分批读取所有匹配书签后统一分组排序，避免分页导致当前会话在后页或同组拆散；不改变 CLI 的分页契约。
+- 新增时恢复当前项目过滤、清空搜索，确保新书签可见；定位状态只保留在浏览器内存中，不用每个书签的参数创建多个标签。
+- 组内仍按创建时间倒序，其余组按最近书签的出现顺序。
+- 增加 jsdom 开发依赖，在现有测试文件中验证真实面板组件的可观察行为。
+
+本轮无未完成项。下方保留旧版本验证记录，其中侧栏/全页入口仅描述历史版本。
+
+# 历史验证记录（2026-10-15）
 
 隔离源码宿主：`feature/thread-message-navigation`，源码 commit `f7b53a6004`。
 未修改 BB 仓库受跟踪文件，未在生产实例安装插件或写书签数据。
