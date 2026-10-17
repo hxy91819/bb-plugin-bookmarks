@@ -1,11 +1,15 @@
 ---
 name: bookmarks
-description: 查询、读取或删除用户通过消息菜单收藏的会话书签。
+description: Find, read, or delete conversation bookmarks saved by the user through message menus.
 ---
 
-使用 `bb bookmarks list --json` 查询最近书签，`--project <project-id>` 筛选项目。
-返回 `{bookmarks, total}`，默认 100 条；用 `--limit <1-200> --offset <n>` 翻页。
-用 `bb bookmarks show <id> --json` 读取完整文字、备注和原消息位置。
-仅在用户要求删除时执行 `bb bookmarks rm <id> --json`。
-缺失 ID、无效参数返回非零退出码；JSON 模式错误在 stderr 中。
-书签由消息“加书签”按钮或 assistant 回复选区菜单创建，备注在书签页面编辑。
+Use `bb bookmarks list --json` to find recent bookmarks; filter by project with
+`--project <project-id>`. Returns `{bookmarks, total}`, with 100 rows by default.
+Use `--limit <1-200> --offset <n>` for pagination.
+Read full text, notes, and the source message with `bb bookmarks show <id> --json`.
+Run `bb bookmarks rm <id> --json` only when the user requests deletion.
+Missing IDs and invalid arguments return nonzero exit codes; JSON errors go to stderr.
+Users create bookmarks with the message action or assistant text-selection menu,
+and edit notes in the Bookmarks panel. UI language follows the browser by default;
+the plugin's Language setting can force English or Simplified Chinese (reload the
+browser after changing it). CLI output does not follow browser language.

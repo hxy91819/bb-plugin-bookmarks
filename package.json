@@ -32,8 +32,8 @@
     "bbPluginSdk": ">=0.6.37 <0.7.0"
   },
   "bb": {
-    "name": "书签",
-    "description": "收藏会话文字，按项目查看并跳回原消息。",
+    "name": "Bookmarks / 书签",
+    "description": "Save conversation text, browse by project, and jump back to the source message. / 收藏会话文字并跳回原消息。",
     "branding": {
       "icon": "./assets/bookmark.svg",
       "experimental_icons": {

@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 import { JSDOM } from "jsdom";
 import { makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { listInput, type Bookmark } from "./contract";
-import app from "./app";
+import { createBookmarksApp } from "./app";
+import { formatDate, readLanguageSetting, resolveLanguage } from "./i18n";
+const app = createBookmarksApp("zh-CN");
 
 const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "http://localhost" });
 const keys = ["window", "document", "HTMLElement", "MutationObserver", "navigator"] as const;
@@ -120,4 +122,57 @@ test("面板默认仅当前项目、当前会话优先；取消过滤按项目�
     globalThis.fetch = previousFetch;
     slot.lifecycle.unmount();
   }
+});
+
+
+test("browser language and explicit overrides apply to registration, panel, dates and errors", async () => {
+  for (const [setting, browserLanguage, language] of [
+    ["auto", "zh-TW", "zh-CN"], ["auto", "zh-CN", "zh-CN"],
+    ["auto", "en-US", "en"], ["auto", "fr-FR", "en"],
+    ["en", "zh-CN", "en"], ["zh-CN", "en-US", "zh-CN"],
+    [undefined, "zh-HK", "zh-CN"], ["invalid", "de-DE", "en"],
+  ] as const) {
+    assert.equal(resolveLanguage(setting, browserLanguage), language);
+    const zh = language === "zh-CN";
+    const captured = await loadPluginApp(createBookmarksApp(setting, browserLanguage));
+    assert.equal(captured.messageActions[0].title, zh ? "加书签" : "Add bookmark");
+    assert.equal(captured.threadPanelActions[0].title, zh ? "书签" : "Bookmarks");
+    let fail = false;
+    const slot = renderSlot(captured.threadPanelActions[0], { threadId: "t", params: null }, {
+      sdk: { threads: { get: async () => makeThreadResponse({ id: "t", projectId: "p1" }) } },
+      rpc: { list: () => {
+        if (fail) throw new Error("Server detail must not leak into UI");
+        return { bookmarks: [{ ...bookmark("localized", "t"), threadTitle: "" }], total: 1 };
+      } },
+    });
+    try {
+      await slot.findByText(zh ? "共 1 条" : "1 bookmark");
+      assert.ok(slot.getByRole("checkbox", { name: zh ? "仅当前项目" : "Current project only" }));
+      assert.ok(slot.getByRole("button", { name: zh ? "打开书签：未命名会话" : "Open bookmark: Untitled thread" }));
+      assert.equal(slot.container.querySelector("time")?.textContent,
+        new Intl.DateTimeFormat(language, { dateStyle: "medium", timeStyle: "medium" }).format(new Date("2026-10-16T12:00:00Z")));
+      assert.equal(formatDate("2026-10-16T12:00:00Z", language), slot.container.querySelector("time")?.textContent);
+      fireEvent.click(slot.getByRole("button", { name: zh ? "改备注" : "Edit note" }));
+      assert.ok(slot.getByRole("button", { name: zh ? "保存备注" : "Save note" }));
+      assert.ok(slot.getByRole("textbox", { name: zh ? "书签备注" : "Bookmark note" }));
+      fail = true;
+      await slot.behavior.emitRealtime("changed", {});
+      await slot.findByRole("alert");
+      assert.ok(slot.getByText(zh ? "加载书签失败，请重试" : "Could not load bookmarks. Please try again."));
+      assert.equal(slot.queryByText("Server detail must not leak into UI"), null);
+    } finally { slot.lifecycle.unmount(); }
+  }
+});
+
+test("registration settings reader handles saved overrides and unavailable settings", async () => {
+  const fetcher = (body: unknown, status = 200) => (async (input: unknown) => {
+    assert.equal(input, "/api/v1/plugins/bookmarks/settings");
+    return Response.json(body, { status });
+  }) as typeof fetch;
+  for (const language of ["auto", "en", "zh-CN"]) {
+    assert.equal(await readLanguageSetting(fetcher({ ok: true, values: { language } })), language);
+  }
+  assert.equal(await readLanguageSetting(fetcher({ ok: false }, 404)), undefined);
+  assert.equal(await readLanguageSetting(fetcher(null)), undefined);
+  assert.equal(await readLanguageSetting((async () => { throw new Error("offline"); }) as typeof fetch), undefined);
 });

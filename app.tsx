@@ -11,7 +11,7 @@ import {
 } from "@get-bb/plugin-sdk/app";
 import { bookmarkSchema, groupBookmarks, type Bookmark, type rpcContract } from "./contract";
 
-const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
+import { messages, resolveLanguage, formatDate, readLanguageSetting, type Language } from "./i18n";
 let target: { threadId: string; id: string } | null = null;
 const listeners = new Set<() => void>();
 const subscribe = (listener: () => void) => {
@@ -34,7 +34,7 @@ async function addBookmark(threadId: string, messageSeq: number, text: string) {
     !("ok" in body) ||
     body.ok !== true
   ) {
-    throw new Error("添加书签失败，请重试");
+    throw new Error("Could not add bookmark");
   }
   return bookmarkSchema.parse("result" in body ? body.result : undefined);
 }
@@ -43,25 +43,29 @@ function BookmarkRow({
   bookmark,
   onChanged,
   highlighted,
+  language,
 }: {
   bookmark: Bookmark;
   onChanged(): void;
   highlighted: boolean;
+  language: Language;
 }) {
+  const m = messages[language];
+  const title = bookmark.threadTitle || m.untitled;
   const navigate = useBbNavigate();
   const rpc = useRpc<typeof rpcContract>();
   const [editing, setEditing] = useState(false);
   const [note, setNote] = useState(bookmark.note);
   const [pending, setPending] = useState(false);
-  const run = async (action: () => Promise<unknown>, success: string) => {
+  const run = async (action: () => Promise<unknown>, success: string, failure: string) => {
     setPending(true);
     try {
       await action();
       toast.success(success);
       onChanged();
       return true;
-    } catch (error) {
-      toast.error(errorText(error));
+    } catch {
+      toast.error(failure);
       return false;
     } finally {
       setPending(false);
@@ -84,10 +88,10 @@ function BookmarkRow({
       <button
         className="block w-full text-left space-y-2"
         onClick={open}
-        aria-label={`打开书签：${bookmark.threadTitle}`}
+        aria-label={m.open(title)}
       >
         <span className="block text-xs text-muted-foreground">
-          {bookmark.threadTitle} · 消息 {bookmark.messageSeq}
+          {title} · {m.message(bookmark.messageSeq)}
         </span>
         <span className="block whitespace-pre-wrap break-words text-sm max-h-64 overflow-y-auto">
           {bookmark.text}
@@ -98,19 +102,19 @@ function BookmarkRow({
           className="space-y-2"
           onSubmit={async (event) => {
             event.preventDefault();
-            if (await run(() => rpc.call("note", { id: bookmark.id, note }), "备注已保存"))
+            if (await run(() => rpc.call("note", { id: bookmark.id, note }), m.noteSaved, m.noteError))
               setEditing(false);
           }}
         >
           <textarea
-            aria-label="书签备注"
+            aria-label={m.noteLabel}
             className="w-full rounded border border-border bg-background p-2 text-sm"
             value={note}
             maxLength={20000}
             onChange={(event) => setNote(event.target.value)}
           />
           <button disabled={pending} type="submit" className="text-sm underline">
-            保存备注
+            {m.saveNote}
           </button>{" "}
           <button
             type="button"
@@ -118,27 +122,27 @@ function BookmarkRow({
             className="text-sm underline"
             onClick={() => setEditing(false)}
           >
-            取消
+            {m.cancel}
           </button>
         </form>
       ) : bookmark.note ? (
         <p className="whitespace-pre-wrap break-words text-sm text-muted-foreground">
-          备注：{bookmark.note}
+          {m.notePrefix}{bookmark.note}
         </p>
       ) : null}
       <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-        <time dateTime={bookmark.createdAt}>{new Date(bookmark.createdAt).toLocaleString()}</time>
+        <time dateTime={bookmark.createdAt}>{formatDate(bookmark.createdAt, language)}</time>
         <button
           disabled={pending}
           onClick={() =>
             void run(async () => {
               if (!(await experimental_copyToClipboard({ text: bookmark.text }))) {
-                throw new Error("复制失败，请重试");
+                throw new Error(m.copyError);
               }
-            }, "文字已复制")
+            }, m.copied, m.copyError)
           }
         >
-          复制文字
+          {m.copy}
         </button>
         <button
           disabled={pending}
@@ -147,20 +151,21 @@ function BookmarkRow({
             setEditing(true);
           }}
         >
-          改备注
+          {m.editNote}
         </button>
         <button
           disabled={pending}
-          onClick={() => void run(() => rpc.call("remove", { id: bookmark.id }), "书签已删除")}
+          onClick={() => void run(() => rpc.call("remove", { id: bookmark.id }), m.removed, m.removeError)}
         >
-          删除
+          {m.remove}
         </button>
       </div>
     </li>
   );
 }
 
-function BookmarksPanel({ threadId }: PluginThreadPanelProps) {
+function BookmarksPanel({ threadId, language }: PluginThreadPanelProps & { language: Language }) {
+  const m = messages[language];
   const rpc = useRpc<typeof rpcContract>();
   const sdk = useSdk();
   const requestedTarget = useSyncExternalStore(subscribe, getTarget);
@@ -180,7 +185,7 @@ function BookmarksPanel({ threadId }: PluginThreadPanelProps) {
     setProjectId(null);
     sdk.threads.get({ threadId }).then(
       (thread) => { if (active) setProjectId(thread.projectId); },
-      (cause) => { if (active) { setError(errorText(cause)); setLoading(false); } },
+      () => { if (active) { setError(m.loadError); setLoading(false); } },
     );
     return () => { active = false; };
   }, [sdk, threadId]);
@@ -218,9 +223,9 @@ function BookmarksPanel({ threadId }: PluginThreadPanelProps) {
           setError(null);
           setLoading(false);
         },
-        (cause) => {
+        () => {
           if (active) {
-            setError(errorText(cause));
+            setError(m.loadError);
             setLoading(false);
           }
         },
@@ -236,11 +241,11 @@ function BookmarksPanel({ threadId }: PluginThreadPanelProps) {
       <label className="flex items-center gap-2 text-sm">
         <input type="checkbox" checked={currentProjectOnly}
           onChange={(event) => setCurrentProjectOnly(event.target.checked)} />
-        仅当前项目
+        {m.currentProject}
       </label>
       <input
-        aria-label="搜索书签"
-        placeholder="搜索文字、备注、会话或项目"
+        aria-label={m.search}
+        placeholder={m.searchPlaceholder}
         className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
         value={query}
         onChange={(event) => {
@@ -251,34 +256,35 @@ function BookmarksPanel({ threadId }: PluginThreadPanelProps) {
         <p role="alert" className="text-sm text-destructive">
           {error}{" "}
           <button className="underline" onClick={refresh}>
-            重试
+            {m.retry}
           </button>
         </p>
       ) : loading ? (
         <p role="status" className="text-sm text-muted-foreground">
-          正在加载…
+          {m.loading}
         </p>
       ) : (
         <>
           {bookmarks.length === 0 && (
             <p className="text-sm text-muted-foreground">
               {query
-                ? "没有匹配的书签"
-                : "还没有书签。在消息上点击“加书签”，或选中回复文字后添加。"}
+                ? m.noMatches
+                : m.empty}
             </p>
           )}
           {groupBookmarks(bookmarks, threadId, !currentProjectOnly).map((group) => (
             <section
               key={group.id}
               className="space-y-2"
-              aria-label={group.title}
+              aria-label={group.title || m.untitled}
             >
-              <h2 className="text-sm font-semibold">{group.title}</h2>
+              <h2 className="text-sm font-semibold">{group.title || m.untitled}</h2>
               <ul className="space-y-2">
                 {group.bookmarks.map((bookmark) => (
                   <BookmarkRow
                     key={bookmark.id}
                     bookmark={bookmark}
+                    language={language}
                     onChanged={refresh}
                     highlighted={bookmark.id === selectedId}
                   />
@@ -287,7 +293,7 @@ function BookmarksPanel({ threadId }: PluginThreadPanelProps) {
             </section>
           ))}
           <div className="flex items-center gap-3 text-xs text-muted-foreground">
-            <span>共 {total} 条</span>
+            <span>{m.count(total)}</span>
           </div>
         </>
       )}
@@ -295,32 +301,40 @@ function BookmarksPanel({ threadId }: PluginThreadPanelProps) {
   );
 }
 
-export default definePluginApp((app) => {
-  app.slots.messageAction({
-    id: "add-bookmark",
-    title: "加书签",
-    icon: "bookmarks/bookmark",
-    async run(context) {
-      try {
-        const bookmark = await addBookmark(
-          context.threadId,
-          context.message.experimental_messageSeq,
-          context.selectedText ?? context.message.text,
-        );
-        target = { threadId: context.threadId, id: bookmark.id };
-        listeners.forEach((listener) => listener());
-        context.openPanel({ actionId: "bookmarks" });
-        toast.success("已加书签");
-      } catch (error) {
-        toast.error(errorText(error));
-      }
-    },
+export function createBookmarksApp(setting: unknown, browserLanguage = typeof navigator === "undefined" ? "" : navigator.language) {
+  const language = resolveLanguage(setting, browserLanguage);
+  const m = messages[language];
+  return definePluginApp((app) => {
+    app.slots.messageAction({
+      id: "add-bookmark",
+      title: m.add,
+      icon: "bookmarks/bookmark",
+      async run(context) {
+        try {
+          const bookmark = await addBookmark(
+            context.threadId,
+            context.message.experimental_messageSeq,
+            context.selectedText ?? context.message.text,
+          );
+          target = { threadId: context.threadId, id: bookmark.id };
+          listeners.forEach((listener) => listener());
+          context.openPanel({ actionId: "bookmarks" });
+          toast.success(m.added);
+        } catch {
+          toast.error(m.addError);
+        }
+      },
+    });
+    app.slots.threadPanelAction({
+      id: "bookmarks",
+      title: m.panel,
+      icon: "bookmarks/bookmark",
+      layout: "flush",
+      component: (props) => <BookmarksPanel {...props} language={language} />,
+    });
   });
-  app.slots.threadPanelAction({
-    id: "bookmarks",
-    title: "书签",
-    icon: "bookmarks/bookmark",
-    layout: "flush",
-    component: BookmarksPanel,
-  });
-});
+}
+
+export default createBookmarksApp(
+  typeof window === "undefined" ? undefined : await readLanguageSetting(fetch),
+);

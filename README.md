@@ -1,6 +1,27 @@
-# 书签 · BB plugin
+# Bookmarks / 书签 · BB plugin
 
 将会话文字存为书签，按项目查看，并回到原会话的原消息。独立插件，运行时仅使用公开 `@get-bb/plugin-sdk`，数据保存在 BB 为插件提供的 SQLite 中。
+
+
+Save conversation text as bookmarks, browse by project, and jump back to the source message.
+Install with `bb plugin install https://github.com/hxy91819/bb-plugin-bookmarks`.
+Use **Add bookmark** on a message or selected assistant reply text, then open **Bookmarks**
+in the right panel to search, copy, edit notes, or delete entries.
+
+## Language / 界面语言
+
+The UI supports English and Simplified Chinese. The plugin's **Language / 语言**
+setting defaults to **Auto / 自动** (`auto`): `navigator.language` starting with
+`zh` selects Simplified Chinese; all other languages select English. Choose
+**English** (`en`) or **简体中文** (`zh-CN`) to override it. Reload the browser after
+changing the setting so message menus, panel titles, content and date formatting
+all use the same language. The setting is shared by this BB instance; auto detection
+runs separately in each browser. CLI descriptions/errors and the agent skill use English.
+
+界面支持英文和简体中文。插件设置中的 **Language / 语言** 默认 **Auto / 自动**：
+浏览器 `navigator.language` 以 `zh` 开头显示中文，其余显示英文。
+可选 **English** 或 **简体中文** 强制覆盖。修改后刷新浏览器，让菜单、标签、面板和日期统一切换。
+设置对当前 BB 实例生效，自动模式按各浏览器分别判断；CLI 与 agent skill 使用英文。
 
 ## 安装
 

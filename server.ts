@@ -1,8 +1,19 @@
+import { messages } from "./i18n";
 import { randomUUID } from "node:crypto";
 import { PLUGIN_CLI_OUTPUT_MAX_BYTES, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { bookmarkSchema, listInput, rpcContract, type Bookmark } from "./contract";
 
 export default function plugin(bb: BbPluginApi) {
+  bb.settings.define({
+    language: {
+      type: "select",
+      label: `${messages.en.language} / ${messages["zh-CN"].language}`,
+      description: `${messages.en.languageHelp} / ${messages["zh-CN"].languageHelp}`,
+      options: ["auto", "en", "zh-CN"],
+      experimental_optionLabels: { auto: `${messages.en.auto} / ${messages["zh-CN"].auto}`, en: "English", "zh-CN": "简体中文" },
+      default: "auto",
+    },
+  });
   const db = bb.storage.database();
   bb.storage.migrate(db, [
     `CREATE TABLE bookmarks (id TEXT PRIMARY KEY, threadId TEXT NOT NULL, messageSeq INTEGER NOT NULL, projectId TEXT NOT NULL, projectName TEXT NOT NULL, threadTitle TEXT NOT NULL, text TEXT NOT NULL, note TEXT NOT NULL, createdAt TEXT NOT NULL)`,
@@ -41,7 +52,7 @@ export default function plugin(bb: BbPluginApi) {
         id: randomUUID(),
         projectId: thread.projectId,
         projectName: project.name,
-        threadTitle: thread.title ?? "未命名会话",
+        threadTitle: thread.title ?? "",
         note: "",
         createdAt: new Date().toISOString(),
       };
@@ -52,7 +63,7 @@ export default function plugin(bb: BbPluginApi) {
       return bookmark;
     },
     note({ id, note }) {
-      if (!get(id)) throw new Error(`书签不存在: ${id}`);
+      if (!get(id)) throw new Error(`Bookmark not found: ${id}`);
       db.prepare("UPDATE bookmarks SET note = ? WHERE id = ?").run(note, id);
       changed();
       return get(id)!;
@@ -63,11 +74,11 @@ export default function plugin(bb: BbPluginApi) {
     "bb bookmarks list [--project <project-id>] [--limit <1-200>] [--offset <n>] [--json]\nbb bookmarks show <id> [--json]\nbb bookmarks rm <id> [--json]";
   bb.cli.register({
     name: "bookmarks",
-    summary: "查看和删除会话书签",
+    summary: "View and delete conversation bookmarks",
     commands: [
-      { name: "list", summary: "列出最近书签，可按项目筛选", usage: usage.split("\n")[0] },
-      { name: "show", summary: "查看完整书签", usage: usage.split("\n")[1] },
-      { name: "rm", summary: "删除书签", usage: usage.split("\n")[2] },
+      { name: "list", summary: "List recent bookmarks, optionally filtered by project", usage: usage.split("\n")[0] },
+      { name: "show", summary: "Show a complete bookmark", usage: usage.split("\n")[1] },
+      { name: "rm", summary: "Delete a bookmark", usage: usage.split("\n")[2] },
     ],
     async run(argv) {
       const json = argv.includes("--json");
@@ -78,8 +89,8 @@ export default function plugin(bb: BbPluginApi) {
           return {
             exitCode: 1,
             stderr: json
-              ? JSON.stringify({ error: "结果过大，请减小 --limit 分页读取" })
-              : "结果过大，请减小 --limit 分页读取",
+              ? JSON.stringify({ error: "Output too large; reduce --limit and read in pages" })
+              : "Output too large; reduce --limit and read in pages",
           };
         return { exitCode: 0, stdout };
       };
@@ -96,7 +107,7 @@ export default function plugin(bb: BbPluginApi) {
             value = args[i + 1];
           if (!value || !["--project", "--limit", "--offset"].includes(flag)) return fail(usage);
           const key = flag === "--project" ? "projectId" : flag.slice(2);
-          if (key in options) return fail(`重复参数: ${flag}`);
+          if (key in options) return fail(`Duplicate argument: ${flag}`);
           options[key] = flag === "--project" ? value : Number(value);
         }
         const parsed = listInput.safeParse(options);
@@ -105,7 +116,7 @@ export default function plugin(bb: BbPluginApi) {
       }
       if ((command === "show" || command === "rm") && args.length === 1) {
         const bookmark = get(args[0]);
-        if (!bookmark) return fail(`书签不存在: ${args[0]}`);
+        if (!bookmark) return fail(`Bookmark not found: ${args[0]}`);
         return reply(command === "show" ? bookmark : { id: args[0], ...remove(args[0]) });
       }
       return fail(usage);
