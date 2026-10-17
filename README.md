@@ -17,6 +17,9 @@ setting defaults to **Auto / 自动** (`auto`): `navigator.language` starting wi
 changing the setting so message menus, panel titles, content and date formatting
 all use the same language. The setting is shared by this BB instance; auto detection
 runs separately in each browser. CLI descriptions/errors and the agent skill use English.
+Thread titles use BB’s explicit title or automatic fallback. Legacy missing title
+snapshots are repaired when read, so existing bookmarks and title search recover too;
+valid saved titles are preserved.
 
 界面支持英文和简体中文。插件设置中的 **Language / 语言** 默认 **Auto / 自动**：
 浏览器 `navigator.language` 以 `zh` 开头显示中文，其余显示英文。
@@ -42,7 +45,7 @@ bb plugin install https://github.com/hxy91819/bb-plugin-bookmarks
 
 定位使用 `toThread(threadId, { experimental_messageSeq })`。支持此扩展的宿主会加载并滚动到目标消息；较旧宿主忽略该选项时仍会打开会话。定位粒度是消息，不会高亮选中的句子。原会话或消息已删除时，书签文字仍保留，宿主负责显示目标不可用。
 
-书签保留添加时的项目名称、会话标题、文字、创建时间和原消息编号。重复添加会创建独立书签。每条文字最多 200000 字符，备注最多 20000 字符。搜索将 `%`、`_` 按普通文字处理；SQLite 默认的 LIKE 不提供完整 Unicode 大小写折叠。
+书签保留添加时的项目名称、会话标题、文字、创建时间和原消息编号。会话显示标题优先使用 `title`，没有时使用 BB 的自动标题 `titleFallback`；读取旧书签时会补全之前误存的空标题或“未命名会话”，已有有效标题快照保持不变。原会话不可用时仍保留书签文字。重复添加会创建独立书签。每条文字最多 200000 字符，备注最多 20000 字符。搜索将 `%`、`_` 按普通文字处理；SQLite 默认的 LIKE 不提供完整 Unicode 大小写折叠。
 
 ## CLI
 

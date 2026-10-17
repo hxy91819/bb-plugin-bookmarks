@@ -8,7 +8,7 @@ import {
 import plugin from "./server";
 import { groupBookmarks, bookmarkSchema } from "./contract";
 
-function fixture() {
+function fixture(fallbackTitles = false) {
   return createFakePluginHost({
     pluginId: "bookmarks",
     sdk: {
@@ -17,7 +17,8 @@ function fixture() {
           makeThreadResponse({
             id: threadId,
             projectId: threadId === "t2" ? "p2" : "p1",
-            title: `会话 ${threadId}`,
+            title: fallbackTitles ? null : `会话 ${threadId}`,
+            titleFallback: fallbackTitles ? `Automatic title ${threadId}` : "Fallback must not replace an explicit title",
           }),
       },
       projects: {
@@ -112,5 +113,39 @@ test("language setting validates overrides, persists on reload, and CLI errors s
     await assert.rejects(harness.behavior.setSettings({ language: "fr" }));
     ({ bb, harness } = await harness.lifecycle.reload(plugin));
     assert.equal((await harness.behavior.runCli(["show", "missing"])).stderr, "Bookmark not found: missing");
+  } finally { await harness.lifecycle.dispose(); }
+});
+
+
+test("bookmarks use automatic thread titles and recover legacy untitled snapshots on reads", async () => {
+  const { bb, harness } = fixture(true);
+  try {
+    await plugin(bb);
+    const added = bookmarkSchema.parse(await harness.behavior.callRpc("add", {
+      threadId: "t1", messageSeq: 7, text: "Title fallback regression",
+    }));
+    assert.equal(added.threadTitle, "Automatic title t1");
+    const db = bb.storage.database();
+    for (const placeholder of ["未命名会话", ""]) {
+      db.prepare("UPDATE bookmarks SET threadTitle = ? WHERE id = ?").run(placeholder, added.id);
+      const listed = await harness.behavior.callRpc("list", {}) as { bookmarks: typeof added[] };
+      assert.equal(listed.bookmarks[0].threadTitle, "Automatic title t1");
+      const searched = await harness.behavior.callRpc("list", { query: "Automatic title t1" }) as { total: number };
+      assert.equal(searched.total, 1);
+      db.prepare("UPDATE bookmarks SET threadTitle = ? WHERE id = ?").run(placeholder, added.id);
+      const cli = await harness.behavior.runCli(["show", added.id, "--json"]);
+      assert.equal(JSON.parse(cli.stdout!).threadTitle, "Automatic title t1");
+      assert.equal((db.prepare("SELECT threadTitle FROM bookmarks WHERE id = ?").get(added.id) as { threadTitle: string }).threadTitle, "Automatic title t1");
+    }
+    db.prepare("UPDATE bookmarks SET threadTitle = ? WHERE id = ?").run("Saved title", added.id);
+    const cli = await harness.behavior.runCli(["list", "--json"]);
+    assert.equal(JSON.parse(cli.stdout!).bookmarks[0].threadTitle, "Saved title");
+    db.prepare("UPDATE bookmarks SET threadTitle = ? WHERE id = ?").run("未命名会话", added.id);
+    harness.sdk.stub("threads.get", async () => { throw new Error("Thread deleted"); });
+    const unavailable = await harness.behavior.callRpc("list", {}) as { bookmarks: typeof added[] };
+    assert.equal(unavailable.bookmarks[0].text, "Title fallback regression");
+    assert.equal(unavailable.bookmarks[0].threadTitle, "");
+    const shown = await harness.behavior.runCli(["show", added.id, "--json"]);
+    assert.equal(JSON.parse(shown.stdout!).text, "Title fallback regression");
   } finally { await harness.lifecycle.dispose(); }
 });

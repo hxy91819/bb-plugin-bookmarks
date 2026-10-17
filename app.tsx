@@ -168,6 +168,12 @@ function BookmarksPanel({ threadId, language }: PluginThreadPanelProps & { langu
   const m = messages[language];
   const rpc = useRpc<typeof rpcContract>();
   const sdk = useSdk();
+  const navigate = useBbNavigate();
+  useEffect(() => {
+    // The host persists tab titles. Reopen this already visible tab to refresh
+    // its title from the current registration without creating another tab.
+    navigate.openThreadPanel({ actionId: "bookmarks" });
+  }, [navigate.openThreadPanel]);
   const requestedTarget = useSyncExternalStore(subscribe, getTarget);
   const selectedId = requestedTarget?.threadId === threadId ? requestedTarget.id : null;
   const [projectId, setProjectId] = useState<string | null>(null);

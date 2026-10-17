@@ -22,16 +22,41 @@ export default function plugin(bb: BbPluginApi) {
   ]);
   const get = (id: string) => {
     const row = db.prepare("SELECT * FROM bookmarks WHERE id = ?").get(id);
-    return row ? bookmarkSchema.parse(row) : null;
+    if (!row) return null;
+    const bookmark = bookmarkSchema.parse(row);
+    return bookmark.threadTitle === messages["zh-CN"].untitled ? { ...bookmark, threadTitle: "" } : bookmark;
   };
-  const list = (input: ReturnType<typeof listInput.parse>) => {
+  // Older versions stored the placeholder instead of the host's automatic title.
+  // Repair only missing snapshots, so SQL title search and existing bookmarks agree.
+  const repairTitle = async (threadId: string) => {
+    try {
+      const thread = await bb.sdk.threads.get({ threadId });
+      const title = thread.title || thread.titleFallback;
+      if (title) db.prepare(
+        "UPDATE bookmarks SET threadTitle = ? WHERE threadId = ? AND (threadTitle = '' OR threadTitle = ?)",
+      ).run(title, threadId, messages["zh-CN"].untitled);
+    } catch {
+      // Deleted or unavailable threads must not make the saved text unreadable.
+    }
+  };
+  const repairMissingTitles = async () => {
+    const rows = db.prepare(
+      "SELECT DISTINCT threadId FROM bookmarks WHERE threadTitle = '' OR threadTitle = ?",
+    ).all(messages["zh-CN"].untitled) as { threadId: string }[];
+    await Promise.all(rows.map(({ threadId }) => repairTitle(threadId)));
+  };
+  const list = async (input: ReturnType<typeof listInput.parse>) => {
+    await repairMissingTitles();
     const term = `%${input.query.replace(/[\\%_]/g, "\\$&")}%`;
     const where = `WHERE (? IS NULL OR projectId = ?) AND (text LIKE ? ESCAPE '\\' OR note LIKE ? ESCAPE '\\' OR threadTitle LIKE ? ESCAPE '\\' OR projectName LIKE ? ESCAPE '\\')`;
     const values = [input.projectId ?? null, input.projectId ?? null, term, term, term, term];
     const bookmarks = db
       .prepare(`SELECT * FROM bookmarks ${where} ORDER BY createdAt DESC, id DESC LIMIT ? OFFSET ?`)
       .all(...values, input.limit, input.offset)
-      .map((row) => bookmarkSchema.parse(row));
+      .map((row) => {
+        const bookmark = bookmarkSchema.parse(row);
+        return bookmark.threadTitle === messages["zh-CN"].untitled ? { ...bookmark, threadTitle: "" } : bookmark;
+      });
     const count = db.prepare(`SELECT count(*) AS total FROM bookmarks ${where}`).get(...values);
     const total = Number((count as { total: number }).total);
     return { bookmarks, total };
@@ -52,7 +77,7 @@ export default function plugin(bb: BbPluginApi) {
         id: randomUUID(),
         projectId: thread.projectId,
         projectName: project.name,
-        threadTitle: thread.title ?? "",
+        threadTitle: thread.title || thread.titleFallback || "",
         note: "",
         createdAt: new Date().toISOString(),
       };
@@ -112,10 +137,14 @@ export default function plugin(bb: BbPluginApi) {
         }
         const parsed = listInput.safeParse(options);
         if (!parsed.success) return fail(usage);
-        return reply(list(parsed.data));
+        return reply(await list(parsed.data));
       }
       if ((command === "show" || command === "rm") && args.length === 1) {
-        const bookmark = get(args[0]);
+        let bookmark = get(args[0]);
+        if (command === "show" && bookmark && (!bookmark.threadTitle || bookmark.threadTitle === messages["zh-CN"].untitled)) {
+          await repairTitle(bookmark.threadId);
+          bookmark = get(args[0]);
+        }
         if (!bookmark) return fail(`Bookmark not found: ${args[0]}`);
         return reply(command === "show" ? bookmark : { id: args[0], ...remove(args[0]) });
       }

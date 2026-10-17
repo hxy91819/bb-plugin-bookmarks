@@ -147,6 +147,10 @@ test("browser language and explicit overrides apply to registration, panel, date
     });
     try {
       await slot.findByText(zh ? "共 1 条" : "1 bookmark");
+      assert.deepEqual(slot.inspection.navigateCalls[0], {
+        method: "openThreadPanel", options: { actionId: "bookmarks" },
+      });
+
       assert.ok(slot.getByRole("checkbox", { name: zh ? "仅当前项目" : "Current project only" }));
       assert.ok(slot.getByRole("button", { name: zh ? "打开书签：未命名会话" : "Open bookmark: Untitled thread" }));
       assert.equal(slot.container.querySelector("time")?.textContent,
